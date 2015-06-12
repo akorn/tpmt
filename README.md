@@ -5,6 +5,14 @@ This is going to be a set of zsh scripts that allow a team to securely share pas
 
 It'll be based on `seccure`.
 
+No GUI is planned.
+
+Goals:
+
+ * it shouldn't get in the way;
+ * everyday tasks should be very simple;
+ * everything should be stored in text files for easy portability.
+
 ## How it'll work
 
  * A password "database" is backed by a subversion repository (or some other RCS, but initially I'm only going to support subversion).
