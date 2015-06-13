@@ -11,7 +11,9 @@ Goals:
 
  * it shouldn't get in the way;
  * everyday tasks should be very simple;
- * everything should be stored in text files for easy portability.
+ * everything should be stored in text files for easy portability;
+ * it shouldn't depend on anything excessive other than zsh and the small seccure package;
+ * Devuan/Debian packaging scripts should be included.
 
 ## How it'll work
 
