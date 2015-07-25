@@ -37,6 +37,7 @@ Initially at least the tools don't aim to be secure against other local users on
  * Revoke a pubkey due to compromise (and replace it with a new one).
   * This should force a password change on all passwords accessible for that pubkey (which is potentially a nightmare but the only secure thing to do).
    * It may be possible that an affected password can't be changed immediately for whatever reason (e.g. because the system it belongs to is inaccessible). Therefore, we must support a system of passwords flags, such as "must-change-asap". The simplest solution seems to be to create a `flags/` subdir under each password that has flags, and every file inside it is a flag. The contents of the file can be some explanation for why the flag was set.
+   * Revoking has to be performed by a person who has access to all the passwords the revoked pubkey has access to; otherwise re-encryption can't take place.
  * Add new password.
   * The new password gets a new unique ID assigned to it.
   * We create a new subdir named after this ID.

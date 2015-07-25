@@ -1,0 +1,192 @@
+#!/bin/zsh
+
+# most functions get their arguments from global variables in order to keep
+# their code simple. Parsing of command line arguments thus only needs to
+# take place in one place, in the main code.
+#
+# Global variables set algorithmically have lowercase names; variables that
+# are used to pass in values from the execution environment have
+# all-uppercase names.
+
+# global vars that'll be set based on cli arguments:
+force=0		# Whether to override sanity checks (may have more than one
+		# level in the future)
+quiet=0		# Whether to suppress normal output
+verbose=0	# Whether to be verbose (may have more than one level in the
+		# future)
+revctrl=svn	# What revision control backend to use. Only svn and noop are
+		# supported for now. git should be easy to add naively, but
+		# conflict resolution and stuff like branching and merging is going
+		# to be a bear.
+
+TPMT_SECCURE_CURVE=p256	# the elliptic curve to use.
+# Has to stay the same for the lifetime of the repository!
+# TODO: instead, store key metadata, such as the curve used, and thus support
+# gradual encryption upgrades.
+
+# exit codes:
+error_key_exists=1	# trying to add key for a username that already has a key
+error_revctl=254	# internal error in revision control api abstraction (e.g. unimplemented operation)
+
+# depending on the value of $verbose, output various diagnostic messages
+# to stderr
+#
+# uses global $verbose
+#
+# args:
+#	messagelevel (currently ignored, will be used to implement verbosity levels)
+#	message
+function log() {
+	if [[ "$verbose" -gt 0 ]]; then
+		shift	# ignore messagelevel for now
+		echo "$@" >&2
+	fi
+}
+
+# prints an error message to stderr
+function error() {
+	echo "$@" >&2
+}
+
+# prints an error message, then exits with the exit status given in the first arg
+function die() {
+	local exit=$1
+	shift
+	echo "$@" >&2
+	exit $exit
+}	
+
+# revision control API abstraction; for now, just support svn and "noop"
+# (which does nothing)
+#
+# uses global $revctrl, $commitmessage
+#
+# args: operation operand1 [ operand2 ... ]
+#
+# operations:
+#
+#	check (returns success if $revctrl is set to a supported value; prints an error message and exits otherwise)
+#	add (operands are files and/or directories)
+#	commit (operands are files and/or directories; commit message comes from $commitmessage)
+#	add-and-commit
+#	revert
+#	delete
+#	delete-and-commit
+function revctrl() {
+	local unknown_op=0
+	local unknown_revctrl=0
+	local ret=0
+	case "$revctrl" in
+		noop|none) return 0;;
+		svn|subversion)	# TODO: add -q if verbose=0
+			case "$1" in
+				add)
+					shift
+					svn add $@
+					ret=$?
+					;;
+				commit)
+					shift
+					svn commit -m "$commitmessage" $@
+					ret=$?
+					;;
+				add-and-commit) # TODO: add error checking/handling
+					shift
+					revctrl add $@
+					ret=$?
+					revctrl commit $@
+					((ret+=$?))
+					;;
+				revert)
+					shift
+					svn revert $@
+					ret=$?
+					;;
+				delete)
+					shift
+					svn del $@
+					ret=$?
+					;;
+				delete-and-commit) # TODO: add error checking/handling
+					shift
+					revctrl delete $@
+					ret=$?
+					revctrl commit $@
+					((ret+=$?))
+					;;
+				check) return 0;;
+				*) unknown_op=1;;
+			esac
+		*) unknown_revctrl=1;;
+	esac
+	if [[ $unknown_revctrl = 1 ]]; then
+		die $error_revctl "$0: error: revision control mechanism '$revctrl' is not implemented."
+	elif [[ $unknown_op = 1 ]]; then
+		echo -n "$0: internal error: revision control operation '$1' not implemented for backend '$revctrl'." >&2
+		if [[ "$force" -gt 0 ]]; then
+			echo "\nContinuing anyway (with no revision control) because force is enabled." >&2
+			return 0
+		else
+			die $error_revctl " Aborting."
+		fi
+	fi
+	return $ret
+}
+
+# initialize a new repository
+#
+# args: $directory; defaults to .
+function initrep() {
+	local dir=${directory:-.}
+	log 1 "Creating 'passwords' and 'pubkeys' subdir under $dir."
+	mkdir -p "$dir"/{passwords,pubkeys}
+	cd "$dir"
+	log 1 "Committing 'passwords' and 'pubkeys' to revision control."
+	commitmessage="tpmt: repository init" revctrl add-and-commit passwords pubkeys
+}
+
+# add a new public key
+#
+# args: $username; defaults to $TPMT_USERNAME, prompts interactively if
+# needed
+# assumes cwd is repository root
+function add_pubkey() {
+	# normally, people shouldn't add other people's pubkeys (those other
+	# people should add their own); we'll bail unless --force is in
+	# effect
+	local username="${username:-$TPMT_USERNAME}"
+	while [[ -z "$username" ]] || ! [[ $username =~ ^[[:print:]]+$ ]]; then	# TODO: investigate whether [[:print:]] is the best choice of characters to allow in usernames
+		read username?"Enter username to create and add a key for: "
+	fi
+	if [[ -f "pubkeys/$username" ]]; then
+		die $error_key_exists "Error: $username already has a key. Maybe you'd like to revoke it?"
+	fi
+	if seccure-key -c $TPMT_SECCURE_CURVE -d -q >pubkeys/"$username"; then
+		commitmessage="tpmt: add pubkey for $username (curve used: $TPMT_SECCURE_URVE)" revctrl add-and-commit pubkeys/"$username"
+	else
+		rm pubkeys/"$username"
+	fi
+}
+
+# replace a pubkey with a new one, re-encrypting all pertinent passwords
+#
+# args: $username; defaults to $TPMT_USERNAME
+function replace_pubkey() {
+	# sanity check: if we replace a pubkey other than our own, we must
+	# have access to all the passwords it has access to
+}
+
+# revoke a public key and replace it with a new one. Force a password change
+# on all affected passwords.
+#
+# args: $revoke_username $username (defaults to $TPMT_USERNAME)
+function revoke_pubkey() {
+	# sanity check: unless --force is in effect, we refuse to revoke a
+	# pubkey if it has access to some passwords that we don't
+}
+
+# adds a password to the database
+#
+# args: myusername keyword [ keyword ... ]
+function add_password() {
+}
