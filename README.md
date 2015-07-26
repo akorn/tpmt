@@ -23,11 +23,13 @@ Goals:
   * I'm going to assume the local checkout the script works in is always mostly up to date; various interesting things might happen if it is not (for example, we might encrypt a password with a revoked public key).
   * The point of using a revision control system is to support semi-distributed (but not necessarily heavily concurrent or disconnected) operation; people managing the passwords should be able to do so on their own single-user computers, but the password repository should be kept up to date in a central location.
  * Every user has an Elliptic Curve (EC) public key (or, rather, potentially several; see below).
+  * `seccure` generates a public key from a passphrase, so that the passphrase acts as the private key; we'll salt the passphrase, just to be sure
  * The scripts will use the filesystem as a database.
   * Directory layout:
    * `passwords`. Under this directory, we'll have one subdir per database entry (effectively, per password), and use different files in those subdirs to store different kinds of data. This should scale to a few thousand entries (after that, it might be better to hash the subdirs).
    * `pubkeys`, with one directory per user, named after the user, which contains the EC pubkeys of the user.
     * Supporting more than one pubkey is necessary to support gradual migration from one pubkey to the other; see below.
+     * Also for disconnected operation, where one user may add a new pubkey and another may concurrently add a new password (and encrypt it with the old pubkey of the first user).
     * The pubkey files will be named after the epoch second they were created in (so we know which of two keys is newer).
      * I'm going to call this the *keyid*.
     * We could have a symlink called `current` that points to the latest key; however, instead of using the symlinks it seems better to always find the latest key algorithmically, eliminating a potential source of inconsistency. 
@@ -37,6 +39,7 @@ Goals:
    * Tracking these allows us to track what passwords we may no longer be able to access.
  * Keys live forever. It doesn't make sense to ever remove a public key, even after it's been revoked (since the old version could always be pulled out of the RCS).
  * Storing a password means creating a new subdir for it, encrypting the password using the current EC key of the adding user and storing the encrypted version in the subdir.
+  * Stored passwords must be salted before encryption too, otherwise an attacker with no knowledge of any pubkey would be able to determine if two stored passwords are identical.
  * Granting access to a password involves decrypting the password with our secret key, then re-encrypting it with the current pubkey of the other user.
   * Since passwords are short and EC is efficient, there is little point in adding another layer of encryption, with a symmetric cipher, as is commonly done with RSA.
  * It'll be possible to have a "global master" account that has access to all passwords, but this isn't going to be enforced.
@@ -49,9 +52,9 @@ At least initially, the tools don't aim to be secure against other local users o
   * This is just `mkdir passwords pubkeys revoked-keys`, plus revision control.
  * Add user (add pubkey).
   * Something like `seccure-key -d -q >pubkeys/username/$EPOCHSECONDS` (but obviously query EPOCHSECONDS first, then save it in a variable).
+   * To increase security, we can add an arbitrary salt string to the passphrase and save the salt as the 2nd line of `pubkeys/username/$EPOCHSECONDS`.
    * An svn pre-commit hook script can make sure people can only add their own pubkeys (svn usernames have to match `tpmt` usernames for this to work).
   * A user can always add a new pubkey. Subsequently updated/added passwords will be encrypted with the latest pubkey, but earlier pubkeys will still be accessible.
-   * (Note that `seccure` typically generates different pubkeys even for the same passphrase, likely due to salting.)
    * When a user adds a new pubkey, we should immediately re-encrypt all passwords encrypted with any of the older keys with the new key.
     * It is possible for "dangling" keys to be left if the user doesn't know the password for one of their old pubkeys.
      * This is not a problem as long as there are other users who can access those passwords; we'll prompt these users to re-encrypt these passwords with the new pubkey of the forgetful user.
@@ -90,13 +93,14 @@ At least initially, the tools don't aim to be secure against other local users o
    * The user can specify the ID (to make it mnemonic), but we can generate one from the keywords provided.
   * We create a new subdir named for this ID.
   * Data to record:
+   * salt -- `subdir/salt`
    * keywords ("attic linksys wrt54g admin") -- these go into `subdir/keywords`, one per line
     * and maybe we could have a `subdir/kw` directory too, with one entry per keyword? This requires some sanitization of keywords though. Keeping these in sync would be nigh impossible. So, no, don't do this.
    * comments -- these go into `subdir/comments/currentuser` (because another user may add another comment)
    * name of user who added the password -- written into `subdir/creator` and `subdir/last-changed-by` (not sure if we actually need this data)
     * both of these could be symlinks instead of real files, which would save some space but would make grepping more difficult; so don't do this.
    * the password itself (encrypted with the current user's current public key)
-    * this can be done with a command line like `echo plainpass | seccure-encrypt -f pubkeys/currentuser/keyid >subdir/users/currentuser/keyid)`
+    * this can be done with a command line like `echo "$salt$pass" | seccure-encrypt -m $TPMT_MAC_BITS -c $TPMT_SECCURE_CURVE $(<"$currentkey") | base64 >"$keydir/$username/${currentkey:t}"`
    * date and time 
     * written to `subdir/stamp-creation` and `subdir/stamp-change`
    * the script should print out the unique ID of the new password before exiting
