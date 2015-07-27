@@ -174,25 +174,44 @@ function revctrl() {
 # uses global $username
 # sets global $currentkey
 function get_current_pubkey() {
-	pushd pubkeys/"$username"
-	# keyids are numeric, and the numeric order equals the temporal order (since the names are timestamps)
-	# The egrep helps filter out junk so we don't accidentally treat a non-keyfile as a keyfile.
-	currentkey=$(pwd)/$(ls -1 | egrep "^[0-9]+$" | sort -n | tail -n 1)
-	[[ -r "$currentkey" ]] || unset currentkey
+	if [[ -n "$currentkeys[$username]" ]]; then
+		currentkey="$currentkeys[$username]"
+	else
+		pushd -q pubkeys/"$username"
+		# keyids are numeric, and the numeric order equals the temporal order (since the names are timestamps)
+		# The egrep helps filter out junk so we don't accidentally treat a non-keyfile as a keyfile.
+		currentkey=$(pwd)/$(ls -1 | egrep "^[0-9]+$" | sort -n | tail -n 1)
+		[[ -r "$currentkey" ]] && currentkeys[$username]="$currentkey" || unset currentkey
+		popd -q
+	fi
 }
 
 # generate a random string to use as passphrase salt using whatever means is available
 # outputs salt to stdout
 function make_salt() {
+	local salt=""
 	[[ "$TPMT_SALT_CHARS" -gt 0 ]] || return
 	if whence pwgen >/dev/null; then
+		log 3 "Using pwgen to generate salt."
 		pwgen -cnys1 $TPMT_SALT_CHARS 1
 	elif whence makepasswd >/dev/null; then
+		log 3 "Using makepasswd to generate salt."
 		makepasswd --chars=$TPMT_SALT_CHARS
-	elif [[ -c /dev/random ]] && whence base64 >/dev/null; then
-		head -c $TPMT_SALT_CHARS | base64
+	elif [[ -c /dev/random ]]; then
+		log 2 "Cobbling together a salt using /dev/random directly."
+		while [[ $#salt -lt $TPMT_SALT_CHARS ]]; do
+			salt="$salt$(head -c 1 </dev/random | tr -c -d '[[:graph:]]')"
+		done
+		echo "$salt"
+	elif [[ -c /dev/urandom ]]; then
+		log 1 "Warning: generating salt using insecure pseudorandom generator. Install makepasswd or pwgen."
+		while [[ $#salt -lt $TPMT_SALT_CHARS ]]; do
+			salt="$salt$(head -c 1 </dev/urandom | tr -c -d '[[:graph:]]')"
+		done
+		echo "$salt"
 	else
 		# generate something using the pseudo-random generator of zsh
+		log 1 "Warning: generating salt using insecure pseudorandom generator. Install makepasswd or pwgen."
 		typeset -i rndchr
 		local i
 		for i in {1..$TPMT_SALT_CHARS}; do
@@ -359,3 +378,5 @@ typeset -A passwords	# a hash to store decrypted passwords, indexed by pwid; hel
 typeset -A pwsalts		# a hash to store salts of passwords, indexed by pwid
 typeset -A passphrases	# a hash to store passphrases (seccure private keys), indexed by keyid; helps avoid excessive prompting, but is insecure on multi-user systems
 typeset -A ppsalts		# a hash to store salts of passphrases, indexed by pwid
+typeset -A currentkeys	# a hash to store the keyid of the most recent key of each user, indexed by username, to speed up lookups
+
