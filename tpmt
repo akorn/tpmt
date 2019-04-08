@@ -47,33 +47,29 @@ error_failed_commit_password=9	# failed to commit directory of newly added passw
 error_revctrl_update=253	# revision control "update" operation failed
 error_revctl=254	# internal error in revision control api abstraction (e.g. unimplemented operation)
 
+# log levels:
+ll_ERROR=0
+ll_NOTICE=1
+ll_INFO=2
+ll_DEBUG=3
+loglevel=(ERROR NOTICE INFO DEBUG)
+
 # depending on the value of $verbose, output various diagnostic messages
 # to stderr
 #
 # uses global $verbose
 #
 # args:
-#	messagelevel (currently ignored, will be used to implement verbosity levels)
-#	message
+#	messagelevel ($ll_ERROR, $ll_NOTICE, $ll_INFO or $ll_DEBUG
 function log() {
-	if [[ "$verbose" -gt 0 ]]; then
-		shift	# ignore messagelevel for now
-		echo "$@" >&2
-	fi
+	local messagelevel=$1; shift
+	[[ "$verbose" -ge $messagelevel ]] && echo "$0: $loglevel[$messagelevel]: $@" >&2
 }
 
-# prints an error message to stderr
-function error() {
-	echo "$@" >&2
-}
+function error() { log $ll_ERROR "$@" }	# log an error message
 
 # prints an error message, then exits with the exit status given in the first arg
-function die() {
-	local exit=$1
-	shift
-	echo "$@" >&2
-	exit $exit
-}	
+function die() { local exitcode=$1; shift; error "$@"; exit $exitcode }	
 
 # revision control API abstraction; for now, just support svn and "noop"
 # (which does nothing)
@@ -104,44 +100,16 @@ function revctrl() {
 		noop|none) return 0;;
 		svn|subversion)	# TODO: add -q if verbose=0
 			case "$1" in
-				add)
-					shift
-					svn add $@
-					ret=$?
-					;;
-				commit)
-					shift
-					svn commit -m "$commitmessage" $@
-					ret=$?
-					;;
+				add)	shift; svn add $@; ret=$?;;
+				commit)	shift; svn commit -m "$commitmessage" $@; ret=$?;;
 				add-and-commit) # TODO: add error checking/handling
-					shift
-					revctrl add $@
-					ret=$?
-					revctrl commit $@
-					((ret+=$?))
-					;;
-				revert)
-					shift
-					svn revert $@
-					ret=$?
-					;;
-				delete)
-					shift
-					svn del $@
-					ret=$?
-					;;
+					shift; revctrl add $@; ret=$?; revctrl commit $@; ((ret+=$?));;
+				revert)	shift; svn revert $@; ret=$?;;
+				delete)	shift; svn del $@; ret=$?;;
 				delete-and-commit) # TODO: add error checking/handling
-					shift
-					revctrl delete $@
-					ret=$?
-					revctrl commit $@
-					((ret+=$?))
-					;;
-				check) return 0;;
-				update)
-					svn up
-					ret=$?
+					shift; revctrl delete $@; ret=$?; revctrl commit $@; ((ret+=$?));;
+				check)	return 0;;
+				update)	svn up; ret=$?
 					if [[ "$ret" -gt 0 ]]; then
 						error "$0: error: svn update failed."
 						if [[ "$force" = 0 ]]; then
@@ -154,14 +122,12 @@ function revctrl() {
 					;;
 				*) unknown_op=1;;
 			esac
-		*) unknown_revctrl=1;;
+		*) die $error_revctl "$0: error: revision control mechanism '$revctrl' is not implemented."
 	esac
-	if [[ $unknown_revctrl = 1 ]]; then
-		die $error_revctl "$0: error: revision control mechanism '$revctrl' is not implemented."
-	elif [[ $unknown_op = 1 ]]; then
-		echo -n "$0: internal error: revision control operation '$1' not implemented for backend '$revctrl'." >&2
+	if [[ $unknown_op = 1 ]]; then
+		error "$0: internal error: revision control operation '$1' not implemented for backend '$revctrl'."
 		if [[ "$force" -gt 0 ]]; then
-			echo "\nContinuing anyway (with no revision control) because force is enabled." >&2
+			log $ll_NOTICE "\nContinuing anyway (with no revision control) because force is enabled."
 			return 0
 		else
 			die $error_revctl " Aborting."
@@ -222,7 +188,7 @@ function make_salt() {
 	fi
 }
 
-# initialize a new repository
+# initialize a new repository -- TODO: expose this on command line
 #
 # args: $directory; defaults to .
 function initrep() {
@@ -242,7 +208,7 @@ function initrep() {
 function add_pubkey() {
 	# normally, people shouldn't add other people's pubkeys (those other
 	# people should add their own); we'll bail unless --force is in
-	# effect
+	# effect (TODO)
 	local username="${username:-$TPMT_USERNAME}"
 	local pass1=foo	# we'll read the plaintext passphrase into these variables
 	local pass2=bar
